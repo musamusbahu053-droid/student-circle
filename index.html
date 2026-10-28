@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Circle</title>
+<style>
+:root{--bg:#f7f6f2;--surface:#fff;--ink:#1c1b19;--muted:#6f6b63;--accent:#2d5fd1;--accent-ink:#fff;--line:#e3e0d7;--danger:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#131312;--surface:#1e1d1b;--ink:#efede6;--muted:#a09b90;--accent:#5b8dff;--accent-ink:#0b1120;--line:#322f2a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--surface);position:sticky;top:0}
+header h1{font-size:18px;margin:0;flex:1}
+.wrap{max-width:720px;margin:0 auto;padding:18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit;margin:6px 0 12px}
+button{background:var(--accent);color:var(--accent-ink);border:none;border-radius:10px;padding:10px 16px;font:inherit;cursor:pointer}
+button.alt{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+button.small{padding:6px 12px;font-size:14px}
+a.link{color:var(--accent);cursor:pointer;text-decoration:none;font-size:14px}
+.muted{color:var(--muted);font-size:14px}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.hidden{display:none}
+.group-item{padding:12px 0;border-bottom:1px solid var(--line)}
+.group-item:last-child{border-bottom:none}
+.tag{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;margin-right:6px;color:var(--muted)}
+.err{color:var(--danger);font-size:14px;margin:4px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="brand" style="cursor:pointer">Student Circle</h1>
+  <span id="whoami" class="muted"></span>
+  <button class="alt small hidden" id="logoutBtn">Log out</button>
+</header>
+<div class="wrap" id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = "https://lmgtrjylnlivghppphdo.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_IlTrEAdh6ISu9Nir0rI3FQ_LFdg_FCl";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const app = document.getElementById("app");
+const whoami = document.getElementById("whoami");
+const logoutBtn = document.getElementById("logoutBtn");
+let session = null, route = { view: "groups" };
+
+document.getElementById("brand").onclick = () => { route = { view: "groups" }; render(); };
+logoutBtn.onclick = async () => { await sb.auth.signOut(); };
+
+sb.auth.onAuthStateChange((_evt, s) => {
+  session = s;
+  whoami.textContent = s ? (s.user.email || "") : "";
+  logoutBtn.classList.toggle("hidden", !s);
+  route = { view: "groups" };
+  render();
+});
+
+function esc(s){ return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+async function ensureProfile(user, displayName){
+  const { data } = await sb.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  if(!data){
+    await sb.from("profiles").insert({ id: user.id, display_name: displayName || user.email.split("@")[0] });
+  }
+}
+
+function render(){
+  if(!session){ renderAuth(); return; }
+  if(route.view === "groups") renderGroups();
+  else if(route.view === "group") renderGroupDetail(route.id);
+}
+
+function renderAuth(){
+  app.innerHTML = `
+    <div class="card">
+      <h2 id="authTitle">Log in</h2>
+      <div id="authErr" class="err"></div>
+      <input id="email" type="email" placeholder="Email">
+      <input id="password" type="password" placeholder="Password">
+      <div id="nameRow" class="hidden"><input id="displayName" placeholder="Your name"></div>
+      <button id="authBtn">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="switchText">No account yet?</span>
+        <a class="link" id="switchLink">Sign up</a>
+      </p>
+    </div>`;
+  let mode = "login";
+  const title = document.getElementById("authTitle");
+  const btn = document.getElementById("authBtn");
+  const switchText = document.getElementById("switchText");
+  const switchLink = document.getElementById("switchLink");
+  const nameRow = document.getElementById("nameRow");
+  const errEl = document.getElementById("authErr");
+
+  switchLink.onclick = () => {
+    mode = mode === "login" ? "signup" : "login";
+    title.textContent = mode === "login" ? "Log in" : "Sign up";
+    btn.textContent = mode === "login" ? "Log in" : "Create account";
+    switchText.textContent = mode === "login" ? "No account yet?" : "Already have an account?";
+    switchLink.textContent = mode === "login" ? "Sign up" : "Log in";
+    nameRow.classList.toggle("hidden", mode === "login");
+    errEl.textContent = "";
+  };
+
+  btn.onclick = async () => {
+    errEl.textContent = "";
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    if(!email || !password){ errEl.textContent = "Enter an email and password."; return; }
+    btn.disabled = true;
+    try{
+      if(mode === "login"){
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if(error) throw error;
+      }else{
+        const name = document.getElementById("displayName").value.trim();
+        const { data, error } = await sb.auth.signUp({ email, password });
+        if(error) throw error;
+        if(data.user) await ensureProfile(data.user, name);
+      }
+    }catch(e){ errEl.textContent = e.message || "Something went wrong."; }
+    btn.disabled = false;
+  };
+}
+
+async function renderGroups(){
+  app.innerHTML = `
+    <div class="card">
+      <h2>Start or join a group</h2>
+      <input id="newName" placeholder="Group name">
+      <input id="newSubject" placeholder="Subject (e.g. Chemistry)">
+      <input id="newSchool" placeholder="School (optional)">
+      <input id="newExam" placeholder="Exam (optional)">
+      <button id="createBtn">Create group</button>
+      <div id="createErr" class="err"></div>
+    </div>
+    <div class="card">
+      <div class="row"><h2 style="margin:0">All groups</h2><input id="search" placeholder="Search by subject or school" style="width:220px;margin:0"></div>
+      <div id="list" class="muted">Loading...</div>
+    </div>`;
+
+  document.getElementById("createBtn").onclick = async () => {
+    const name = document.getElementById("newName").value.trim();
+    const subject = document.getElementById("newSubject").value.trim();
+    const school = document.getElementById("newSchool").value.trim();
+    const exam = document.getElementById("newExam").value.trim();
+    const errEl = document.getElementById("createErr");
+    if(!name || !subject){ errEl.textContent = "Name and subject are required."; return; }
+    const { data, error } = await sb.from("groups").insert({
+      name, subject, school: school || null, exam: exam || null, created_by: session.user.id
+    }).select().single();
+    if(error){ errEl.textContent = error.message; return; }
+    await sb.from("group_members").insert({ group_id: data.id, user_id: session.user.id });
+    route = { view: "group", id: data.id }; render();
+  };
+
+  let allGroups = [];
+  async function load(){
+    const { data: groups } = await sb.from("groups").select("*").order("created_at", { ascending: false });
+    const { data: myMemberships } = await sb.from("group_members").select("group_id").eq("user_id", session.user.id);
+    const mySet = new Set((myMemberships||[]).map(m => m.group_id));
+    allGroups = (groups||[]).map(g => ({ ...g, joined: mySet.has(g.id) }));
+    draw(allGroups);
+  }
+  function draw(list){
+    const el = document.getElementById("list");
+    if(!list.length){ el.textContent = "No groups yet — be the first to create one."; return; }
+    el.innerHTML = list.map(g => `
+      <div class="group-item">
+        <div class="row">
+          <div>
+            <strong>${esc(g.name)}</strong><br>
+            <span class="tag">${esc(g.subject)}</span>
+            ${g.school ? `<span class="tag">${esc(g.school)}</span>` : ""}
+            ${g.exam ? `<span class="tag">${esc(g.exam)}</span>` : ""}
+          </div>
+          <button class="small ${g.joined ? "alt" : ""}" data-id="${g.id}" data-joined="${g.joined}">
+            ${g.joined ? "Open" : "Join"}
+          </button>
+        </div>
+      </div>`).join("");
+    el.querySelectorAll("button[data-id]").forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.id;
+        if(b.dataset.joined !== "true"){
+          await sb.from("group_members").insert({ group_id: id, user_id: session.user.id });
+        }
+        route = { view: "group", id }; render();
+      };
+    });
+  }
+  document.getElementById("search").oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    draw(allGroups.filter(g => g.subject.toLowerCase().includes(q) || (g.school||"").toLowerCase().includes(q) || g.name.toLowerCase().includes(q)));
+  };
+  load();
+}
+
+async function renderGroupDetail(id){
+  const { data: group } = await sb.from("groups").select("*").eq("id", id).single();
+  if(!group){ route = { view: "groups" }; render(); return; }
+  app.innerHTML = `
+    <a class="link" id="back">&larr; All groups</a>
+    <div class="card">
+      <h2>${esc(group.name)}</h2>
+      <span class="tag">${esc(group.subject)}</span>
+      ${group.school ? `<span class="tag">${esc(group.school)}</span>` : ""}
+      ${group.exam ? `<span class="tag">${esc(group.exam)}</span>` : ""}
+    </div>
+    <div class="card">
+      <h3>Timetable</h3>
+      <div id="timetable" class="muted">Loading...</div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <select id="day"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option></select>
+        <input id="time" placeholder="Time (e.g. 6:00 PM)" style="margin:0">
+        <input id="topic" placeholder="Topic" style="margin:0">
+        <button class="small" id="addSlot">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Resource board</h3>
+      <div id="resources" class="muted">Loading...</div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <input id="resTitle" placeholder="Title" style="margin:0">
+        <input id="resLink" placeholder="Link or note" style="margin:0">
+        <button class="small" id="addRes">Add</button>
+      </div>
+    </div>`;
+  document.getElementById("back").onclick = () => { route = { view: "groups" }; render(); };
+
+  async function loadTimetable(){
+    const { data } = await sb.from("timetable_entries").select("*").eq("group_id", id).order("created_at");
+    const el = document.getElementById("timetable");
+    el.innerHTML = (data&&data.length) ? data.map(t => `<div>${esc(t.day_of_week)} &middot; ${esc(t.time_label)} &mdash; ${esc(t.topic)}</div>`).join("") : "No sessions scheduled yet.";
+  }
+  async function loadResources(){
+    const { data } = await sb.from("resources").select("*").eq("group_id", id).order("created_at", { ascending: false });
+    const el = document.getElementById("resources");
+    el.innerHTML = (data&&data.length) ? data.map(r => `<div><strong>${esc(r.title)}</strong>: ${esc(r.link_or_note)}</div>`).join("") : "No resources shared yet.";
+  }
+
+  document.getElementById("addSlot").onclick = async () => {
+    const day_of_week = document.getElementById("day").value;
+    const time_label = document.getElementById("time").value.trim();
+    const topic = document.getElementById("topic").value.trim();
+    if(!time_label || !topic) return;
+    await sb.from("timetable_entries").insert({ group_id: id, day_of_week, time_label, topic, created_by: session.user.id });
+    document.getElementById("time").value = ""; document.getElementById("topic").value = "";
+    loadTimetable();
+  };
+  document.getElementById("addRes").onclick = async () => {
+    const title = document.getElementById("resTitle").value.trim();
+    const link_or_note = document.getElementById("resLink").value.trim();
+    if(!title || !link_or_note) return;
+    await sb.from("resources").insert({ group_id: id, title, link_or_note, created_by: session.user.id });
+    document.getElementById("resTitle").value = ""; document.getElementById("resLink").value = "";
+    loadResources();
+  };
+  loadTimetable(); loadResources();
+}
+
+sb.auth.getSession().then(({ data }) => { session = data.session; whoami.textContent = session ? (session.user.email||"") : ""; logoutBtn.classList.toggle("hidden", !session); render(); });
+</script>
+</body>
+</html>
